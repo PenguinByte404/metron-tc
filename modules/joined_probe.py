@@ -51,9 +51,21 @@ def execute(db, exe_dir):
     nist_ref = db['active'].get("references", f"{scale_name} Database")
     tc_data = db['active'][tc_type]
 
+    # --- INITIALIZE MASTER AUDIT LOG ---
+    master_audit_log =  "==================================================\n"
+    master_audit_log += "          METRON TC : CALIBRATION AUDIT           \n"
+    master_audit_log += "==================================================\n"
+    master_audit_log += f"DUT Asset ID    : {dut_id}\n"
+    master_audit_log += f"Thermocouple    : Type {tc_type}\n"
+    master_audit_log += f"Reference Scale : {scale_name}\n"
+    master_audit_log += f"Primary Ref     : {nist_ref}\n"
+    master_audit_log += "==================================================\n\n"
+
+    test_point_count = 1
+
     # Enter the continuous testing loop
     while True:
-        print(f"\n--- NEW TEST POINT : {dut_id} ---")
+        print(f"\n--- NEW TEST POINT : {dut_id} (Point {test_point_count}) ---")
         try:
             sprt_cj = float(input("Enter SPRT Cold Junction Temp (°C): "))
             sprt_hot = float(input("Enter SPRT Target Temperature (°C): "))
@@ -62,27 +74,20 @@ def execute(db, exe_dir):
             print("[!] Input error. Please enter valid numeric values.")
             continue
 
-        # --- BUILD THE AUDIT TRAIL AND DO THE MATH ---
-        audit_log =  "==================================================\n"
-        audit_log += "          METRON TC : CALIBRATION AUDIT           \n"
-        audit_log += "==================================================\n"
-        audit_log += f"DUT Asset ID    : {dut_id}\n"
-        audit_log += f"Thermocouple    : Type {tc_type}\n"
-        audit_log += f"Reference Scale : {scale_name}\n"
-        audit_log += f"Primary Ref     : {nist_ref}\n"
-        audit_log += "--------------------------------------------------\n"
-
+        # --- BUILD POINT-SPECIFIC LOG ---
+        point_log = f"--- TEST POINT {test_point_count} ---\n"
+        
         # 1. Cold Junction Calculation
-        audit_log += f"STEP 1: Calculate Cold Junction Voltage (V_cj)\n"
-        audit_log += f"Measured CJ Temp (T_cj): {sprt_cj} °C\n"
+        point_log += f"STEP 1: Calculate Cold Junction Voltage (V_cj)\n"
+        point_log += f"Measured CJ Temp (T_cj): {sprt_cj} °C\n"
         
         if custom_cjc:
-            audit_log += f"Reference: Realized TRP Asset [{trp_name}]\n"
+            point_log += f"Reference: Realized TRP Asset [{trp_name}]\n"
             # Mode 3 custom TRPs are natively in mV, so use poly_type="raw"
             v_cj = MetronMath.calc_poly(sprt_cj, custom_cjc, poly_type="raw")
-            audit_log += MetronMath.generate_proof_string("V_cj", sprt_cj, custom_cjc) + "\n"
+            point_log += MetronMath.generate_proof_string("V_cj", sprt_cj, custom_cjc) + "\n"
         else:
-            audit_log += f"Reference: {nist_ref}\n"
+            point_log += f"Reference: {nist_ref}\n"
             
             # --- PIECEWISE UPDATE ---
             try:
@@ -105,19 +110,19 @@ def execute(db, exe_dir):
                 v_cj += (exp_val_uv / 1000.0)
                 proof += f" + [{exp['a0']:.6e} * e^({exp['a1']:.6e} * ({sprt_cj} - {exp['a2']})^2)]"
             
-            audit_log += proof + "\n"
+            point_log += proof + "\n"
             
-        audit_log += f">> Result V_cj: {v_cj:.6f} mV\n\n"
+        point_log += f">> Result V_cj: {v_cj:.6f} mV\n\n"
 
         # 2. Total Voltage Calculation
-        audit_log += f"STEP 2: Calculate Total Absolute Voltage (V_total)\n"
+        point_log += f"STEP 2: Calculate Total Absolute Voltage (V_total)\n"
         v_total = dut_mv + v_cj
-        audit_log += f"Formula: V_total = DUT_mV + V_cj\n"
-        audit_log += f">> Result V_total = {dut_mv:.6f} + {v_cj:.6f} = {v_total:.6f} mV\n\n"
+        point_log += f"Formula: V_total = DUT_mV + V_cj\n"
+        point_log += f">> Result V_total = {dut_mv:.6f} + {v_cj:.6f} = {v_total:.6f} mV\n\n"
 
         # 3. Indicated Temp Calculation
-        audit_log += f"STEP 3: Calculate Indicated Temp (T_ind) via Inverse Polynomial\n"
-        audit_log += f"Reference: {nist_ref}\n"
+        point_log += f"STEP 3: Calculate Indicated Temp (T_ind) via Inverse Polynomial\n"
+        point_log += f"Reference: {nist_ref}\n"
         
         # --- PIECEWISE UPDATE ---
         try:
@@ -129,34 +134,40 @@ def execute(db, exe_dir):
         inv_coeffs = inv_block["coefficients"]
         # Tell the engine we are using raw NIST inverse arrays (input mV -> µV)
         t_ind = MetronMath.calc_poly(v_total, inv_coeffs, poly_type="inverse_nist")
-        audit_log += MetronMath.generate_proof_string("T_ind", round(v_total, 6), inv_coeffs) + "\n"
-        audit_log += f">> Result T_ind: {t_ind:.4f} °C\n\n"
+        point_log += MetronMath.generate_proof_string("T_ind", round(v_total, 6), inv_coeffs) + "\n"
+        point_log += f">> Result T_ind: {t_ind:.4f} °C\n\n"
 
         # 4. Error Calculation
-        audit_log += f"STEP 4: Calculate DUT Error\n"
-        audit_log += f"SPRT True Hot Temp (T_true): {sprt_hot} °C\n"
+        point_log += f"STEP 4: Calculate DUT Error\n"
+        point_log += f"SPRT True Hot Temp (T_true): {sprt_hot} °C\n"
         error = t_ind - sprt_hot
-        audit_log += f"Formula: Error = T_ind - T_true\n"
-        audit_log += f">> Final Error: {error:.4f} °C\n"
-        audit_log += "==================================================\n"
+        point_log += f"Formula: Error = T_ind - T_true\n"
+        point_log += f">> Final Error: {error:.4f} °C\n"
+        point_log += "--------------------------------------------------\n\n"
 
-        # --- OUTPUT & EXPORT PROMPT ---
-        print("\n" + audit_log)
+        # Print current point log to terminal for immediate feedback
+        print("\n" + point_log.strip())
+        
+        # Append to the master log
+        master_audit_log += point_log
 
-        save_opt = input("Save this math proof to a .txt file? (y/n): ").strip().lower()
-        if save_opt == 'y':
-            saved_path = MetronMath.export_proof(
-                proof_text=audit_log,
-                exe_dir=exe_dir,
-                tc_type=tc_type,
-                scale=scale_name,
-                test_name="JoinedProbe",
-                dut_id=dut_id
-            )
-            print(f"[i] Proof successfully saved to: {saved_path}")
-
-        # --- LOOP OR EXIT ---
+        # --- LOOP OR BREAK ---
+        test_point_count += 1
         again = input("\nRun another test point for this DUT? (y/n): ").strip().lower()
         if again != 'y':
-            print("\n[i] Exiting Joined Probe Module. Returning to Main Menu...")
             break
+
+    # --- EXPORT PROMPT (TRIGGERS ONLY WHEN FINISHED WITH DUT) ---
+    save_opt = input("\nSave this composite math proof to a .txt file? (y/n): ").strip().lower()
+    if save_opt == 'y':
+        saved_path = MetronMath.export_proof(
+            proof_text=master_audit_log.strip(),
+            exe_dir=exe_dir,
+            tc_type=tc_type,
+            scale=scale_name,
+            test_name="JoinedProbe",
+            dut_id=dut_id
+        )
+        print(f"[i] Composite proof successfully saved to: {saved_path}")
+
+    print("\n[i] Exiting Joined Probe Module. Returning to Main Menu...")
