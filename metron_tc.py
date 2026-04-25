@@ -56,7 +56,7 @@ class MetronTC:
         print(r" | |\/| |/ _ \ __| '__/ _ \| '_ \    | || |     ")
         print(r" | |  | |  __/ |_| | | (_) | | | |   | || |___  ")
         print(r" |_|  |_|\___|\__|_|  \___/|_| |_|   |_| \____| ")
-        print(" Thermocouple Metrology Suite v2.0")
+        print(" Thermocouple Metrology Suite v2.1.0")
         print("------------------------------------------------")
 
     def select_scale(self):
